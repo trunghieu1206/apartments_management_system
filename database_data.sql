@@ -1,4 +1,0 @@
--- tenants data
-
-
--- landlords data
