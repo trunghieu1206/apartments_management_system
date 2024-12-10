@@ -2,6 +2,9 @@
 -- create a database named `apartments_project` 
 -- connect to this database and then run the sql script
 
+-- SOME NOTES:
+    -- when declaring a column as UNIQUE, a BTREE index is automatically created for that column
+
 -------------------------- TABLES ---------------------------------
 -------------------------------------------------------------------
 CREATE TABLE tenants (
@@ -68,21 +71,21 @@ CREATE TABLE payment_details (
 ---------------------------------------------------------------------
 -- tenants table
 ALTER TABLE tenants
-ADD CONSTRAINT unique_email UNIQUE(email);
+ADD CONSTRAINT tenants_unique_email UNIQUE(email);
 
 ALTER TABLE tenants 
-ADD CONSTRAINT unique_phone UNIQUE(phone);
+ADD CONSTRAINT tenants_unique_phone UNIQUE(phone);
 
 -- landlords table
 ALTER TABLE landlords
-ADD CONSTRAINT unique_email UNIQUE(email);
+ADD CONSTRAINT landlords_unique_email UNIQUE(email);
 
 ALTER TABLE landlords 
-ADD CONSTRAINT unique_phone UNIQUE(phone);
+ADD CONSTRAINT landlords_unique_phone UNIQUE(phone);
 
 -- apartments table
 ALTER TABLE apartments
-ADD CONSTRAINT unique_address UNIQUE(address)
+ADD CONSTRAINT apartments_unique_address UNIQUE(address);
 
 ALTER TABLE apartments
 ADD CONSTRAINT apartments_fk_landlords FOREIGN KEY (landlord_id)
@@ -128,7 +131,7 @@ ON DELETE SET NULL;
 
 ALTER TABLE bills
 ADD CONSTRAINT bills_fk_contracts FOREIGN KEY (contract_id)
-REFERENCES contracts(contract_id);
+REFERENCES contracts(contract_id)
 ON UPDATE CASCADE -- if contract_id in `contracts` gets updated this will also get updated
 ON DELETE SET NULL;
 
