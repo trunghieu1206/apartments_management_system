@@ -58,7 +58,6 @@ CREATE TABLE contracts (
 
 CREATE TABLE bills (
     bill_id INT PRIMARY KEY,
-    tenant_id INT,
     contract_id INT,
     month INT,
     price INT NOT NULL
@@ -66,6 +65,7 @@ CREATE TABLE bills (
 
 CREATE TABLE payment_details (
     bill_id INT,
+    tenant_id INT,
     payment_date DATE NOT NULL
 );
 
@@ -118,12 +118,6 @@ ON DELETE SET NULL;
 
 -- `bills` table
 ALTER TABLE bills
-ADD CONSTRAINT bills_fk_tenants FOREIGN KEY (tenant_id)
-REFERENCES tenants(tenant_id)
-ON UPDATE CASCADE -- if tenant_id in `tenant` gets updated this will also get updated
-ON DELETE SET NULL;
-
-ALTER TABLE bills
 ADD CONSTRAINT bills_fk_contracts FOREIGN KEY (contract_id)
 REFERENCES contracts(contract_id)
 ON UPDATE CASCADE -- if contract_id in `contracts` gets updated this will also get updated
@@ -136,11 +130,17 @@ REFERENCES bills(bill_id)
 ON UPDATE CASCADE -- if bill_id gets updated in `bills` this will get updated
 ON DELETE CASCADE;  -- if bill is deleted payment_details also get deleted
 
+ALTER TABLE payment_details
+ADD CONSTRAINT payment_details_fk_tenants FOREIGN KEY (tenant_id)
+REFERENCES tenants(tenant_id)
+ON UPDATE CASCADE -- if tenant_id in `tenant` gets updated this will also get updated
+ON DELETE SET NULL;
+
 ---------------------- TRIGGER CONSTRAINTS ------------------------
 -------------------------------------------------------------------
 
 -- `requests` table
--- insert constraints
+-- insert constraints: if tenants want to craete a new request
 --
 CREATE OR REPLACE FUNCTION tf_bf_insert_on_requests()
 RETURNS TRIGGER AS $$
@@ -156,7 +156,6 @@ BEGIN
     END IF;
 
     -- check if tenant has already requested for this apartment in that month
-        -- more optimized query
     IF EXISTS (
         SELECT 1 
         FROM requests 
@@ -189,12 +188,10 @@ FOR EACH ROW
 EXECUTE PROCEDURE tf_bf_insert_on_requests();
 
 -- `requests` table
--- delete contraint
+-- delete contraint: if tenant wants to cancel a created request 
 --
 CREATE OR REPLACE FUNCTION tf_bf_delete_on_requests()
 RETURNS TRIGGER AS $$
-DECLARE 
-
 BEGIN 
 
     -- check if there is already a contract formed
@@ -219,12 +216,10 @@ FOR EACH ROW
 EXECUTE PROCEDURE tf_bf_delete_on_requests();
 
 -- `contracts` table
--- insert constraint
+-- insert constraint for landlords:
 -- 
 CREATE OR REPLACE FUNCTION tf_bf_insert_on_contracts() 
 RETURNS TRIGGER AS $$
-DECLARE
-
 BEGIN
 
     -- check if end_date - start_date >= 3 or not
@@ -260,11 +255,10 @@ EXECUTE PROCEDURE tf_bf_insert_on_contracts();
 -- 
 CREATE OR REPLACE FUNCTION tf_bf_update_on_contracts()
 RETURNS TRIGGER AS $$
-DECLARE
-
 BEGIN
 
     -- not yet implement
+
 
 END;
 $$ LANGUAGE plpgsql;
@@ -273,3 +267,58 @@ CREATE TRIGGER bf_update_on_contracts
 BEFORE UPDATE ON contracts
 FOR EACH ROW
 EXECUTE PROCEDURE tf_bf_update_on_contracts();
+
+-- `bills` table
+-- insert constraint: cannot have more than 1 bill for each month of the contract
+--
+CREATE OR REPLACE FUNCTION tf_bf_insert_on_bills()
+RETURNS TRIGGER AS $$
+BEGIN
+
+    -- check if bill is already generated for that month of that contract
+    IF EXISTS (
+        SELECT 1 
+        FROM bills 
+        WHERE contract_id = NEW.contract_id
+            AND month = NEW.month
+    ) THEN 
+        RAISE EXCEPTION 'already added bill for that month for contract_id %', NEW.contract_id;
+    END IF;
+
+    -- if ok
+    RETURN NEW;
+
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER bf_insert_on_bills
+BEFORE INSERT ON bills
+FOR EACH ROW
+EXECUTE PROCEDURE tf_bf_insert_on_bills();
+
+-- `payment_details` table
+-- insert constraint: when tenants pay for a bill
+-- 
+CREATE OR REPLACE FUNCTION tf_bf_insert_on_payment_details()
+RETURNS TRIGGER AS $$
+BEGIN 
+
+    -- tenant cannot pay more than once for the same bill
+    IF EXISTS (
+        SELECT 1 
+        FROM payment_details 
+        WHERE tenant_id = NEW.tenant_id
+            AND bill_id = NEW.bill_id
+    ) THEN 
+        RAISE EXCEPTION 'Cannot add payment details, tenant % already paid for bill %', NEW.tenant_id, NEW.bill_id;
+    END IF;
+
+    RETURN NEW;
+
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER bf_insert_on_payment_details
+BEFORE INSERT ON payment_details
+FOR EACH ROW 
+EXECUTE PROCEDURE tf_bf_insert_on_payment_details();
