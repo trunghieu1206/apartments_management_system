@@ -7,7 +7,7 @@
 
 -------------------------- TABLES ---------------------------------
 -------------------------------------------------------------------
-DROP TABLE IF EXISTS tenants, landlords, apartments, requests, contracts, bills, payment_details;
+DROP TABLE IF EXISTS tenants, landlords, apartments, requests, contracts, bills, payment_details, rating;
 
 CREATE TABLE tenants (
     tenant_id INT PRIMARY KEY,
@@ -53,11 +53,12 @@ CREATE TABLE contracts (
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
     rent_amount INT NOT NULL,
-    request_id INT NOT NULL
+    request_id INT NOT NULL,
+    landlord_id INT NOT NULL
 );
 
 CREATE TABLE bills (
-    bill_id INT PRIMARY KEY,
+    bill_id SERIAL PRIMARY KEY,
     contract_id INT,
     month INT,
     price INT NOT NULL
@@ -67,6 +68,12 @@ CREATE TABLE payment_details (
     bill_id INT,
     tenant_id INT,
     payment_date DATE NOT NULL
+);
+
+CREATE TABLE rating (
+    tenant_id INT,
+    apartment_id INT,
+    score INT
 );
 
 --------------------- PK, FK, UNIQUE CONSTRAINTS --------------------
@@ -116,6 +123,11 @@ REFERENCES requests(request_id)
 ON UPDATE CASCADE -- 
 ON DELETE SET NULL; 
 
+ALTER TABLE contracts ADD CONSTRAINT contracts_fk_landlords FOREIGN KEY (landlord_id)
+REFERENCES landlords(landlord_id)
+ON UPDATE CASCADE
+ON DELETE CASCADE;
+
 -- `bills` table
 ALTER TABLE bills
 ADD CONSTRAINT bills_fk_contracts FOREIGN KEY (contract_id)
@@ -134,6 +146,19 @@ ALTER TABLE payment_details
 ADD CONSTRAINT payment_details_fk_tenants FOREIGN KEY (tenant_id)
 REFERENCES tenants(tenant_id)
 ON UPDATE CASCADE -- if tenant_id in `tenant` gets updated this will also get updated
+ON DELETE SET NULL;
+
+-- `rating` table
+ALTER TABLE rating 
+ADD CONSTRAINT rating_fk_tenants FOREIGN KEY (tenant_id)
+REFERENCES tenants(tenant_id)
+ON UPDATE CASCADE
+ON DELETE SET NULL;
+
+ALTER TABLE rating 
+ADD CONSTRAINT rating_fk_apartments FOREIGN KEY (apartment_id)
+REFERENCES apartments(apartment_id)
+ON UPDATE CASCADE
 ON DELETE SET NULL;
 
 ---------------------- TRIGGER CONSTRAINTS ------------------------
@@ -210,7 +235,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER bf_delete_on_requestes
+CREATE TRIGGER bf_delete_on_requests
 BEFORE DELETE ON requests
 FOR EACH ROW 
 EXECUTE PROCEDURE tf_bf_delete_on_requests();
@@ -322,3 +347,78 @@ CREATE TRIGGER bf_insert_on_payment_details
 BEFORE INSERT ON payment_details
 FOR EACH ROW 
 EXECUTE PROCEDURE tf_bf_insert_on_payment_details();
+
+-- `rating` table
+-- insert constraint: when tenants want to rate an apartment
+CREATE OR REPLACE FUNCTION tf_bf_insert_on_rating()
+RETURNS TRIGGER AS $$
+BEGIN 
+
+    -- check if this tenant has already rated for this apartment before
+    IF EXISTS (
+        SELECT 1 
+        FROM rating 
+        WHERE tenant_id = NEW.tenant_id
+            AND apartment_id = NEW.apartment_id
+    ) THEN 
+        RAISE EXCEPTION 'Cannot rate, tenant % alread rated apartment %', NEW.tenant_id, NEW.apartment_id;
+    END IF;
+
+    -- check if tenant has rented the apartment before or is currently renting
+    IF NOT EXISTS (
+        SELECT 1 
+        FROM contracts C 
+        JOIN requests R ON R.request_id = C.request_id
+        WHERE R.tenant_id = NEW.tenant_id
+            AND R.apartment_id = NEW.apartment_id
+    ) THEN 
+        RAISE EXCEPTION 'Cannot rate, tenant % has not rented apartment %', NEW.tenant_id, NEW.apartment_id;
+    END IF;
+
+    -- if ok 
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER bf_insert_on_rating
+BEFORE INSERT ON payment_details
+FOR EACH ROW
+EXECUTE PROCEDURE tf_bf_insert_on_rating();
+
+---------------------- FUNCTIONS ----------------------------------
+-------------------------------------------------------------------
+-- auto add bill function, can be called using pg_cron extension to auto check for 5th day
+CREATE OR REPLACE FUNCTION generate_bills()
+RETURNS VOID AS $$
+DECLARE 
+    v_contract_id INT;
+    v_rent_amount INT;
+BEGIN 
+    -- select all contracts which are still active
+    -- then add into bill
+
+    -- 1st approach: using for loop
+    -- FOR v_contract_id IN (
+    --     SELECT contract_id 
+    --     FROM contracts 
+    --     WHERE end_date > CURRENT_DATE
+    -- ) LOOP
+    --     -- get base rent_amount
+    --     SELECT INTO v_rent_amount rent_amount 
+    --     FROM contracts 
+    --     WHERE contract_id = v_contract_id;
+
+    --     -- insert into bill table
+    --     INSERT INTO bills (contract_id, month, price)
+    --     VALUES (v_contract_id, EXTRACT(MONTH FROM CURRENT_DATE), v_rent_amount)
+    -- END LOOP;
+
+    -- 2nd approach: more optimized
+    INSERT INTO bills (contract_id, month, price)
+    SELECT contract_id, EXTRACT(MONTH FROM CURRENT_DATE), rent_amount
+    FROM contracts
+    WHERE end_date > CURRENT_DATE;
+
+
+END;
+$$ LANGUAGE plpgsql;
