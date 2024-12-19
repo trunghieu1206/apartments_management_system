@@ -53,12 +53,11 @@ CREATE TABLE contracts (
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
     rent_amount INT NOT NULL,
-    request_id INT NOT NULL,
-    landlord_id INT NOT NULL
+    request_id INT NOT NULL
 );
 
 CREATE TABLE bills (
-    bill_id SERIAL PRIMARY KEY,
+    bill_id INT PRIMARY KEY,
     contract_id INT,
     month INT,
     price INT NOT NULL
@@ -123,11 +122,6 @@ REFERENCES requests(request_id)
 ON UPDATE CASCADE -- 
 ON DELETE SET NULL; 
 
-ALTER TABLE contracts ADD CONSTRAINT contracts_fk_landlords FOREIGN KEY (landlord_id)
-REFERENCES landlords(landlord_id)
-ON UPDATE CASCADE
-ON DELETE CASCADE;
-
 -- `bills` table
 ALTER TABLE bills
 ADD CONSTRAINT bills_fk_contracts FOREIGN KEY (contract_id)
@@ -176,6 +170,7 @@ BEGIN
 
     -- check if duration is greater or equal than 3 or not
     IF(NEW.duration < 3) THEN 
+        
         RAISE EXCEPTION 'duration = % is less than 3, cannot add request', NEW.duration; -- RAISE EXCEPTION stops the execution of function immediately, no need for return NULL 
         -- RETURN NULL;
     END IF;
@@ -200,6 +195,11 @@ BEGIN
             AND C.end_date >= TO_DATE(NEW.start_month || '-01', 'YYYY-MM-DD')::DATE
     ) THEN 
         RAISE EXCEPTION 'Cannot request for apartment from start_month = %, it is being rented', NEW.start_month;
+    END IF;
+
+    -- start_month must be after request_date
+    IF NEW.start_month <= TO_CHAR(NEW.request_date, 'YYYY-MM') THEN
+        RAISE EXCEPTION 'start month must be after request_date';
     END IF;
 
     -- if every conditions are satisfied then proceed inserting
@@ -422,3 +422,14 @@ BEGIN
 
 END;
 $$ LANGUAGE plpgsql;
+
+
+
+------------------ POPULATING DATA to tables ----------------------
+-------------------------------------------------------------------
+-- NOTE: needs to be in directory: apartments_management_system
+\i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/tenants/tenants.sql
+
+\i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/landlords/landlords.sql
+
+-- \i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/requests/requests.sql;
