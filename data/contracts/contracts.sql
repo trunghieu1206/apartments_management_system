@@ -1,0 +1,10 @@
+insert into contracts (contract_id, rent_amount, request_id) values (1, 520, '5631');
+insert into contracts (contract_id, rent_amount, request_id) values (2, 534, '11294');
+insert into contracts (contract_id, rent_amount, request_id) values (3, 504, '8244');
+insert into contracts (contract_id, rent_amount, request_id) values (4, 592, '9207');
+insert into contracts (contract_id, rent_amount, request_id) values (5, 475, '4072');
+insert into contracts (contract_id, rent_amount, request_id) values (6, 452, '4494');
+insert into contracts (contract_id, rent_amount, request_id) values (7, 350, '6754');
+insert into contracts (contract_id, rent_amount, request_id) values (8, 459, '3854');
+insert into contracts (contract_id, rent_amount, request_id) values (9, 498, '10801');
+insert into contracts (contract_id, rent_amount, request_id) values (10, 429, '3331');

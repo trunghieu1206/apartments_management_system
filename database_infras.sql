@@ -170,9 +170,19 @@ BEGIN
 
     -- check if duration is greater or equal than 3 or not
     IF(NEW.duration < 3) THEN 
-        
         RAISE EXCEPTION 'duration = % is less than 3, cannot add request', NEW.duration; -- RAISE EXCEPTION stops the execution of function immediately, no need for return NULL 
         -- RETURN NULL;
+    END IF;
+
+    -- start_month must be after request_date
+    IF NEW.start_month <= TO_CHAR(NEW.request_date, 'YYYY-MM') THEN
+        RAISE EXCEPTION 'Start month must be after request_date';
+    END IF;
+
+    -- start_month must not be more than 1 year
+    -- compared to request_date
+    IF ( (NEW.request_date + INTERVAL '1 year') < (TO_DATE(NEW.start_month || '-01', 'YYYY-MM-DD')) ) THEN
+        RAISE EXCEPTION 'Can only request within 1 year of current_date';
     END IF;
 
     -- check if tenant has already requested for this apartment in that month
@@ -192,14 +202,9 @@ BEGIN
         FROM contracts C
         JOIN requests R ON R.request_id = C.request_id
         WHERE R.apartment_id = NEW.apartment_id
-            AND C.end_date >= TO_DATE(NEW.start_month || '-01', 'YYYY-MM-DD')::DATE
+            AND C.end_date >= TO_DATE(NEW.start_month || '-01', 'YYYY-MM-DD')
     ) THEN 
         RAISE EXCEPTION 'Cannot request for apartment from start_month = %, it is being rented', NEW.start_month;
-    END IF;
-
-    -- start_month must be after request_date
-    IF NEW.start_month <= TO_CHAR(NEW.request_date, 'YYYY-MM') THEN
-        RAISE EXCEPTION 'start month must be after request_date';
     END IF;
 
     -- if every conditions are satisfied then proceed inserting
@@ -241,29 +246,50 @@ FOR EACH ROW
 EXECUTE PROCEDURE tf_bf_delete_on_requests();
 
 -- `contracts` table
--- insert constraint for landlords:
--- 
+-- insert constraint for landlords: when landlord accepts a request
+-- note: insert query will insert 3 fields (contract_id, rent_amount, request_id)
+-- the other 2 columns: start_date and end_date will be auto calculated
+--
 CREATE OR REPLACE FUNCTION tf_bf_insert_on_contracts() 
 RETURNS TRIGGER AS $$
+DECLARE 
+    v_start_date DATE;
+    v_end_date DATE;
+    v_loop RECORD; -- RECORD type holds the results of a query
 BEGIN
 
-    -- check if end_date - start_date >= 3 or not
-    IF(EXTRACT(MONTH FROM AGE(NEW.end_date + INTERVAL '1 day', NEW.start_date)) < 3) THEN
-        RAISE EXCEPTION 'Rent duration is not greater or equal than 3';
-    END IF;
+    -- calculate start_date and end_date of this contract
+    SELECT TO_DATE(start_month || '-01', 'YYYY-MM-DD'), ((TO_DATE(start_month || '-01', 'YYYY-MM-DD') +  (duration || ' months')::INTERVAL) - INTERVAL '1 day')::DATE
+    INTO v_start_date, v_end_date
+    FROM requests
+    WHERE request_id = NEW.request_id;
 
-    -- check if the apartment is still being rented until start_date
-    IF EXISTS (
-        SELECT 1 
-        FROM contracts C
-        JOIN requests R ON R.apartment_id = C.apartment_id
-        WHERE R.apartment_id = NEW.apartment_id
-            AND C.end_date >= NEW.start_date
-    ) THEN
-        RAISE EXCEPTION 'cannot accept request, apartment is being rented at %', NEW.start_date;
-    END IF;
+    -- set start_date and end_date column in the insert query 
+    NEW.start_date = v_start_date;
+    NEW.end_date = v_end_date;
+    -- note that this will set the value of start_date and end_date
+    -- in the insert query correspondingly whether or not we specify
+    -- these 2 columns in the INSERT query
 
-    -- if all conditions satisfy then proceed
+    -- loop through existing contracts to check if there is any overlap between
+    -- [start_date:end_date] of any contract and [start_date:end_date]
+    -- of to-be-created contract (to-be-accepted request)
+    FOR v_loop IN (
+        SELECT start_date, end_date 
+        FROM contracts C 
+        JOIN requests R ON R.request_id = C.request_id
+        WHERE R.apartment_id = (
+            SELECT apartment_id 
+            FROM requests 
+            WHERE request_id = NEW.request_id
+        )
+    ) LOOP 
+        IF (v_loop.start_date <= NEW.end_date AND v_loop.end_date >= NEW.start_date) THEN 
+            RAISE EXCEPTION 'cannot accept request %, apartment is being rented between % and %', NEW.request_id, v_loop.start_date, v_loop.end_date;
+        END IF;
+    END LOOP;
+
+    -- if all conditions satisfy then insert this new record into contracts
     RETURN NEW;
 
 END;
@@ -427,9 +453,11 @@ $$ LANGUAGE plpgsql;
 
 ------------------ POPULATING DATA to tables ----------------------
 -------------------------------------------------------------------
--- NOTE: needs to be in directory: apartments_management_system
+-- NOTE: used your own path to sql files
 \i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/tenants/tenants.sql
-
+  
 \i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/landlords/landlords.sql
 
--- \i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/requests/requests.sql;
+\i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/apartments/apartments.sql
+
+\i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/requests/requests.sql;
