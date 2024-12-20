@@ -57,9 +57,9 @@ CREATE TABLE contracts (
 );
 
 CREATE TABLE bills (
-    bill_id INT PRIMARY KEY,
+    bill_id SERIAL PRIMARY KEY, -- bill_id is automatically incremented
     contract_id INT,
-    month INT,
+    month CHAR(7),
     price INT NOT NULL
 );
 
@@ -127,7 +127,10 @@ ALTER TABLE bills
 ADD CONSTRAINT bills_fk_contracts FOREIGN KEY (contract_id)
 REFERENCES contracts(contract_id)
 ON UPDATE CASCADE -- if contract_id in `contracts` gets updated this will also get updated
-ON DELETE SET NULL;
+ON DELETE CASCADE;
+
+ALTER TABLE bills
+ADD CONSTRAINT bills_unique_contract_id_month UNIQUE (contract_id, month);
 
 -- `payment_detals` table
 ALTER TABLE payment_details
@@ -142,6 +145,9 @@ REFERENCES tenants(tenant_id)
 ON UPDATE CASCADE -- if tenant_id in `tenant` gets updated this will also get updated
 ON DELETE SET NULL;
 
+ALTER TABlE payment_details 
+ADD CONSTRAINT payment_details_unique_bill_id_tenant_id UNIQUE (bill_id, tenant_id);
+
 -- `rating` table
 ALTER TABLE rating 
 ADD CONSTRAINT rating_fk_tenants FOREIGN KEY (tenant_id)
@@ -155,8 +161,15 @@ REFERENCES apartments(apartment_id)
 ON UPDATE CASCADE
 ON DELETE SET NULL;
 
+ALTER TABlE rating 
+ADD CONSTRAINT rating_unique_tenant_id_apartment_id UNIQUE (tenant_id, apartment_id);
+
 ---------------------- TRIGGER CONSTRAINTS ------------------------
 -------------------------------------------------------------------
+-- NOTE that when a batch of records are to be added to table and one of 
+-- them violates the trigger constraint then the operation will be aborted,
+-- which means no records are added at all
+
 
 -- `requests` table
 -- insert constraints: if tenants want to craete a new request
@@ -255,12 +268,16 @@ RETURNS TRIGGER AS $$
 DECLARE 
     v_start_date DATE;
     v_end_date DATE;
+    v_apartment_id INT;
     v_loop RECORD; -- RECORD type holds the results of a query
 BEGIN
 
     -- calculate start_date and end_date of this contract
-    SELECT TO_DATE(start_month || '-01', 'YYYY-MM-DD'), ((TO_DATE(start_month || '-01', 'YYYY-MM-DD') +  (duration || ' months')::INTERVAL) - INTERVAL '1 day')::DATE
-    INTO v_start_date, v_end_date
+    SELECT 
+        TO_DATE(start_month || '-01', 'YYYY-MM-DD'), 
+        ((TO_DATE(start_month || '-01', 'YYYY-MM-DD') +  (duration || ' months')::INTERVAL) - INTERVAL '1 day')::DATE,
+        apartment_id
+    INTO v_start_date, v_end_date, v_apartment_id
     FROM requests
     WHERE request_id = NEW.request_id;
 
@@ -278,11 +295,7 @@ BEGIN
         SELECT start_date, end_date 
         FROM contracts C 
         JOIN requests R ON R.request_id = C.request_id
-        WHERE R.apartment_id = (
-            SELECT apartment_id 
-            FROM requests 
-            WHERE request_id = NEW.request_id
-        )
+        WHERE R.apartment_id = v_apartment_id
     ) LOOP 
         IF (v_loop.start_date <= NEW.end_date AND v_loop.end_date >= NEW.start_date) THEN 
             RAISE EXCEPTION 'cannot accept request %, apartment is being rented between % and %', NEW.request_id, v_loop.start_date, v_loop.end_date;
@@ -380,16 +393,6 @@ CREATE OR REPLACE FUNCTION tf_bf_insert_on_rating()
 RETURNS TRIGGER AS $$
 BEGIN 
 
-    -- check if this tenant has already rated for this apartment before
-    IF EXISTS (
-        SELECT 1 
-        FROM rating 
-        WHERE tenant_id = NEW.tenant_id
-            AND apartment_id = NEW.apartment_id
-    ) THEN 
-        RAISE EXCEPTION 'Cannot rate, tenant % alread rated apartment %', NEW.tenant_id, NEW.apartment_id;
-    END IF;
-
     -- check if tenant has rented the apartment before or is currently renting
     IF NOT EXISTS (
         SELECT 1 
@@ -407,7 +410,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER bf_insert_on_rating
-BEFORE INSERT ON payment_details
+BEFORE INSERT ON rating
 FOR EACH ROW
 EXECUTE PROCEDURE tf_bf_insert_on_rating();
 
@@ -449,11 +452,114 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- function to generate all bills based on existing contracts in the db
+CREATE OR REPLACE FUNCTION generate_all_bills()
+RETURNS VOID AS $$
+DECLARE
+    v_loop RECORD;
+    v_loop_date DATE;
+BEGIN 
 
+    -- loop through all contracts 
+    FOR v_loop IN (
+        SELECT contract_id, start_date, end_date, rent_amount
+        FROM contracts
+    ) LOOP 
+        -- get date
+        v_loop_date := v_loop.start_date + INTERVAL '4 days';
+
+        -- generate bills for each month from start_date to end_date 
+        -- note that we only gen bills for 5-th day of the month which is before CURRENT_DATE
+        WHILE (v_loop_date <= v_loop.end_date AND v_loop_date <= CURRENT_DATE) LOOP
+            -- insert a record into `bills` table
+            INSERT INTO bills (contract_id, month, price)
+            VALUES (v_loop.contract_id, TO_CHAR(v_loop_date, 'YYYY-MM'), v_loop.rent_amount)
+            ON CONFLICT (contract_id, month) DO NOTHING; -- in case this function is called multiple times
+
+            RAISE NOTICE 'values inserted: %, %, %', v_loop.contract_id, TO_CHAR(v_loop_date, 'YYYY-MM'), v_loop.rent_amount;
+
+            -- increment
+            v_loop_date := v_loop_date + INTERVAL '1 month';
+        END LOOP;   
+    END LOOP;
+
+END;
+$$ LANGUAGE plpgsql;
+
+-- function to generate all payment details based on existing bills in db
+-- note: only generate records until CURRENT_DATE's month
+CREATE OR REPLACE FUNCTION generate_all_payment_details()
+RETURNS VOID AS $$
+DECLARE
+    v_loop RECORD;
+    v_random_day INT;
+    v_payment_date DATE;
+    v_month_end_date DATE;
+BEGIN 
+
+    -- loop through all bills 
+    FOR v_loop IN (
+        SELECT B.bill_id, R.tenant_id, B.month
+        FROM bills B
+        JOIN contracts C ON C.contract_id = B.contract_id
+        JOIN requests R ON R.request_id = C.request_id
+    ) LOOP 
+        -- get the last day of the month
+        v_month_end_date := TO_DATE(v_loop.month || '-01', 'YYYY-MM-DD') + INTERVAL '1 month - 1 day';
+
+        -- only add payment details until CURRENT_DATE's previous month
+        IF v_month_end_date < CURRENT_DATE THEN
+            -- generate a random day after the 5th of the month
+            v_random_day := 5 + FLOOR(random() * (DATE_PART('days', v_month_end_date)::INT - 5 + 1));
+
+            -- calculate the payment_date
+            v_payment_date := TO_DATE(v_loop.month || '-01', 'YYYY-MM-DD') + (v_random_day || ' days')::INTERVAL;
+
+            -- insert into payment_details table
+            INSERT INTO payment_details (bill_id, tenant_id, payment_date)
+            VALUES (v_loop.bill_id, v_loop.tenant_id, v_payment_date)
+            ON CONFLICT (bill_id, tenant_id) DO NOTHING;
+        END IF;
+
+    END LOOP;
+
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- function to generate all rating based on existing contracts in db
+-- note: only generate records
+CREATE OR REPLACE FUNCTION generate_all_rating()
+RETURNS VOID AS $$
+DECLARE
+    v_loop RECORD;
+    v_random_score INT;
+BEGIN 
+
+    -- loop through all contracts to get tenant_id and apartment_id
+    FOR v_loop IN (
+        SELECT R.tenant_id, R.apartment_id
+        FROM contracts C 
+        JOIN requests R ON R.request_id = C.request_id
+    ) LOOP 
+
+        -- generate a random score between 1 and 5
+        v_random_score := ROUND(RANDOM()*(5 - 1) + 1);
+
+        -- insert a record into rating table
+        INSERT INTO rating (tenant_id, apartment_id, score)
+        VALUES (v_loop.tenant_id, v_loop.apartment_id, v_random_score)
+        ON CONFLICT (tenant_id, apartment_id) DO NOTHING;
+
+    END LOOP;
+
+END;
+$$ LANGUAGE plpgsql;
 
 ------------------ POPULATING DATA to tables ----------------------
 -------------------------------------------------------------------
 -- NOTE: used your own path to sql files
+-- Data is mocked from 2020-01-01 to 2024-12-18 (for request_date in requests table)
 \i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/tenants/tenants.sql
   
 \i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/landlords/landlords.sql
@@ -461,3 +567,11 @@ $$ LANGUAGE plpgsql;
 \i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/apartments/apartments.sql
 
 \i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/requests/requests.sql;
+
+\i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/contracts/contracts.sql
+
+SELECT generate_all_bills();
+
+SELECT generate_all_payment_details();
+
+SELECT generate_all_rating();
