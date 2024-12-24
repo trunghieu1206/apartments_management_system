@@ -115,6 +115,21 @@ REFERENCES apartments(apartment_id)
 ON UPDATE CASCADE -- if aparment_id in `apartments` gets updated this will also get updated
 ON DELETE SET NULL;
 
+-- duration has to be greater than 3
+ALTER TABLE requests 
+ADD CONSTRAINT requests_check_duration 
+CHECK (duration >= 3);
+
+-- start_month has to be after request_date
+ALTER TABLE requests 
+ADD CONSTRAINT requests_check_start_month_after_request_date 
+CHECK (TO_DATE(start_month || '-01', 'YYYY-MM-DD') > request_date);
+
+-- start_month must be within 1 year of request_date
+ALTER TABLE requests
+ADD CONSTRAINT check_start_month_within_1_year
+CHECK (TO_DATE(start_month || '-01', 'YYYY-MM-DD') <= request_date + INTERVAL '1 year');
+
 -- `contracts` table
 ALTER TABLE contracts 
 ADD CONSTRAINT contracts_fk_requests FOREIGN KEY (request_id)
@@ -132,7 +147,7 @@ ON DELETE CASCADE;
 ALTER TABLE bills
 ADD CONSTRAINT bills_unique_contract_id_month UNIQUE (contract_id, month);
 
--- `payment_detals` table
+-- `payment_details` table
 ALTER TABLE payment_details
 ADD CONSTRAINT payment_details_fk_bills FOREIGN KEY (bill_id)
 REFERENCES bills(bill_id)
@@ -172,7 +187,7 @@ ADD CONSTRAINT rating_unique_tenant_id_apartment_id UNIQUE (tenant_id, apartment
 
 
 -- `requests` table
--- insert constraints: if tenants want to craete a new request
+-- insert constraints: if tenants want to create a new request
 --
 CREATE OR REPLACE FUNCTION tf_bf_insert_on_requests()
 RETURNS TRIGGER AS $$
@@ -180,23 +195,6 @@ DECLARE
     v_duration INT;
     v_start_month CHAR(7);
 BEGIN
-
-    -- check if duration is greater or equal than 3 or not
-    IF(NEW.duration < 3) THEN 
-        RAISE EXCEPTION 'duration = % is less than 3, cannot add request', NEW.duration; -- RAISE EXCEPTION stops the execution of function immediately, no need for return NULL 
-        -- RETURN NULL;
-    END IF;
-
-    -- start_month must be after request_date
-    IF NEW.start_month <= TO_CHAR(NEW.request_date, 'YYYY-MM') THEN
-        RAISE EXCEPTION 'Start month must be after request_date';
-    END IF;
-
-    -- start_month must not be more than 1 year
-    -- compared to request_date
-    IF ( (NEW.request_date + INTERVAL '1 year') < (TO_DATE(NEW.start_month || '-01', 'YYYY-MM-DD')) ) THEN
-        RAISE EXCEPTION 'Can only request within 1 year of current_date';
-    END IF;
 
     -- check if tenant has already requested for this apartment in that month
     IF EXISTS (
@@ -231,7 +229,7 @@ FOR EACH ROW
 EXECUTE PROCEDURE tf_bf_insert_on_requests();
 
 -- `requests` table
--- delete contraint: if tenant wants to cancel a created request 
+-- contraint: if tenant wants to cancel a created request 
 --
 CREATE OR REPLACE FUNCTION tf_bf_delete_on_requests()
 RETURNS TRIGGER AS $$
@@ -331,61 +329,6 @@ CREATE TRIGGER bf_update_on_contracts
 BEFORE UPDATE ON contracts
 FOR EACH ROW
 EXECUTE PROCEDURE tf_bf_update_on_contracts();
-
--- `bills` table
--- insert constraint: cannot have more than 1 bill for each month of the contract
---
-CREATE OR REPLACE FUNCTION tf_bf_insert_on_bills()
-RETURNS TRIGGER AS $$
-BEGIN
-
-    -- check if bill is already generated for that month of that contract
-    IF EXISTS (
-        SELECT 1 
-        FROM bills 
-        WHERE contract_id = NEW.contract_id
-            AND month = NEW.month
-    ) THEN 
-        RAISE EXCEPTION 'already added bill for that month for contract_id %', NEW.contract_id;
-    END IF;
-
-    -- if ok
-    RETURN NEW;
-
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER bf_insert_on_bills
-BEFORE INSERT ON bills
-FOR EACH ROW
-EXECUTE PROCEDURE tf_bf_insert_on_bills();
-
--- `payment_details` table
--- insert constraint: when tenants pay for a bill
--- 
-CREATE OR REPLACE FUNCTION tf_bf_insert_on_payment_details()
-RETURNS TRIGGER AS $$
-BEGIN 
-
-    -- tenant cannot pay more than once for the same bill
-    IF EXISTS (
-        SELECT 1 
-        FROM payment_details 
-        WHERE tenant_id = NEW.tenant_id
-            AND bill_id = NEW.bill_id
-    ) THEN 
-        RAISE EXCEPTION 'Cannot add payment details, tenant % already paid for bill %', NEW.tenant_id, NEW.bill_id;
-    END IF;
-
-    RETURN NEW;
-
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER bf_insert_on_payment_details
-BEFORE INSERT ON payment_details
-FOR EACH ROW 
-EXECUTE PROCEDURE tf_bf_insert_on_payment_details();
 
 -- `rating` table
 -- insert constraint: when tenants want to rate an apartment
