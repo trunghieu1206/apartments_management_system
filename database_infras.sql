@@ -103,6 +103,7 @@ ON UPDATE CASCADE
 ON DELETE CASCADE;
 
 -- `requests` table
+-- 
 ALTER TABLE requests 
 ADD CONSTRAINT requests_fk_tenants FOREIGN KEY (tenant_id)
 REFERENCES tenants(tenant_id)
@@ -127,10 +128,11 @@ CHECK (TO_DATE(start_month || '-01', 'YYYY-MM-DD') > request_date);
 
 -- start_month must be within 1 year of request_date
 ALTER TABLE requests
-ADD CONSTRAINT check_start_month_within_1_year
+ADD CONSTRAINT requests_check_start_month_within_1_year
 CHECK (TO_DATE(start_month || '-01', 'YYYY-MM-DD') <= request_date + INTERVAL '1 year');
 
 -- `contracts` table
+--
 ALTER TABLE contracts 
 ADD CONSTRAINT contracts_fk_requests FOREIGN KEY (request_id)
 REFERENCES requests(request_id)
@@ -138,6 +140,7 @@ ON UPDATE CASCADE --
 ON DELETE SET NULL; 
 
 -- `bills` table
+--
 ALTER TABLE bills
 ADD CONSTRAINT bills_fk_contracts FOREIGN KEY (contract_id)
 REFERENCES contracts(contract_id)
@@ -148,6 +151,7 @@ ALTER TABLE bills
 ADD CONSTRAINT bills_unique_contract_id_month UNIQUE (contract_id, month);
 
 -- `payment_details` table
+--
 ALTER TABLE payment_details
 ADD CONSTRAINT payment_details_fk_bills FOREIGN KEY (bill_id)
 REFERENCES bills(bill_id)
@@ -164,6 +168,7 @@ ALTER TABlE payment_details
 ADD CONSTRAINT payment_details_unique_bill_id_tenant_id UNIQUE (bill_id, tenant_id);
 
 -- `rating` table
+--
 ALTER TABLE rating 
 ADD CONSTRAINT rating_fk_tenants FOREIGN KEY (tenant_id)
 REFERENCES tenants(tenant_id)
