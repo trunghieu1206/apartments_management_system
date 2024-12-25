@@ -4,7 +4,7 @@
 --COPY payment_details FROM 'D:\\Documents\\HUST\\Database Lab\\Project\\apartments_management_system\\data\\payment_details\\payment_details.csv' DELIMITER ',' CSV HEADER;
 
 --Query 10--
-DROP FUNCTION IF EXISTS view_pending_requests, view_apartment_info, view_landlord_info, view_recived_requests,view_request_statistics;
+DROP FUNCTION IF EXISTS view_pending_requests, view_apartment_info, view_landlord_info, view_recived_requests,view_request_statistics, view_tenant_accept_rate;
 
 CREATE INDEX idx_apartments_apartment_id ON apartments(apartment_id);
 CREATE INDEX idx_requests_apartment_id ON requests(apartment_id);
@@ -96,7 +96,6 @@ BEGIN
     RETURN v_avg_score;
 END;
 $$ LANGUAGE plpgsql;
-
 --SELECT *, view_apartment_rating(apartment_id) AS rating FROM apartments
 --WHERE landlord_id = 409;
 --SELECT cal_avg_all_rating(409);
@@ -316,4 +315,125 @@ $$ LANGUAGE plpgsql;
 --select * from view_request_statistics(409);
 
 --Query 33: view return rate of an apartment-- 
+CREATE OR REPLACE FUNCTION view_apartment_return_rate(p_apartment_id INT)
+RETURNS NUMERIC 
+AS $$
+DECLARE
+    v_return_rate NUMERIC;
+    v_count_returning_tenants BIGINT;
+    v_count_total_tenants BIGINT;
+BEGIN 
+    --calculate number of tenants who rented more than once
+    SELECT COUNT(*)
+    INTO v_count_returning_tenants
+    FROM (
+        SELECT r.tenant_id
+        FROM contracts c
+        JOIN requests r ON c.request_id = r.request_id
+        WHERE r.apartment_id = p_apartment_id
+        GROUP BY r.tenant_id
+        HAVING COUNT(c.contract_id) > 1
+    );
 
+    --calculate total number of rented times
+    SELECT COUNT(*)
+    INTO v_count_total_tenants
+    FROM contracts c
+    JOIN requests r ON c.request_id = r.request_id
+    WHERE apartment_id = p_apartment_id;
+
+    --if the apt hasnt been rented once -> rr = 0
+    IF v_count_total_tenants = 0 THEN
+        RETURN 0;
+    END IF;
+
+    --calculate returning rate
+    v_return_rate := (v_count_returning_tenants::NUMERIC / v_count_total_tenants) * 100;
+    RETURN v_return_rate;
+END;
+$$ LANGUAGE plpgsql;
+--select view_apartment_return_rate(1477);
+--SELECT r.apartment_id, COUNT(c.contract_id) AS rental_count
+--FROM contracts c
+--JOIN requests r ON c.request_id = r.request_id
+--GROUP BY r.apartment_id
+--HAVING COUNT(c.contract_id) > 2;
+--select * from requests
+--where apartment_id = 1477;
+
+--Query 33.5: view return rate of a landlord--
+CREATE OR REPLACE FUNCTION view_landlord_return_rate(p_landlord_id INT)
+RETURNS NUMERIC
+AS $$
+DECLARE
+    v_return_rate NUMERIC;
+    v_count_returning_tenants BIGINT;
+    v_count_total_tenants BIGINT;
+BEGIN 
+    --calculate number of tenants who rented more than once
+    SELECT COUNT(*)
+    INTO v_count_returning_tenants
+    FROM (
+        SELECT r.tenant_id
+        FROM contracts c
+        JOIN requests r ON c.request_id = r.request_id
+        WHERE EXISTS( --only check bool in apartments table without joining
+            SELECT 1
+            FROM apartments a
+            WHERE a.apartment_id = r.apartment_id AND a.landlord_id = p_landlord_id
+        )
+        GROUP BY r.tenant_id
+        HAVING COUNT(c.contract_id) > 1
+    );
+
+    --calculate total number of rented times
+    SELECT COUNT(*)
+    INTO v_count_total_tenants
+    FROM contracts c
+    JOIN requests r ON c.request_id = r.request_id
+    WHERE EXISTS(
+            SELECT 1
+            FROM apartments a
+            WHERE a.apartment_id = r.apartment_id AND a.landlord_id = p_landlord_id
+    );
+
+    --if the apt hasnt been rented once -> rr = 0
+    IF v_count_total_tenants = 0 THEN
+        RETURN 0;
+    END IF;
+
+    --calculate returning rate
+    v_return_rate := (v_count_returning_tenants::NUMERIC / v_count_total_tenants) * 100;
+    RETURN v_return_rate;
+END;
+$$ LANGUAGE plpgsql;
+--SELECT view_landlord_return_rate(409);
+
+--Query 35: view request accept rate--
+CREATE OR REPLACE FUNCTION view_tenant_accept_rate(p_tenant_id INT)
+RETURNS NUMERIC
+AS $$
+DECLARE
+    v_total_requests BIGINT;
+    v_accepted_requests BIGINT;
+    v_accept_rate DECIMAL(4,2);
+BEGIN 
+    --count total request
+    SELECT COUNT(*)
+    INTO v_total_requests
+    FROM requests
+    WHERE tenant_id = p_tenant_id;
+
+    --count accepted requests
+    SELECT COUNT(c.contract_id)
+    INTO v_accepted_requests
+    FROM contracts c
+    JOIN requests r ON c.request_id = r.request_id
+    WHERE r.tenant_id = p_tenant_id;
+
+    --calculate accept rate
+    v_accept_rate := (v_accepted_requests::NUMERIC / v_total_requests) * 100;
+    RETURN v_accept_rate;
+END;
+$$ LANGUAGE plpgsql;
+--select view_tenant_accept_rate(666);

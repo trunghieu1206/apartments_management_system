@@ -504,7 +504,7 @@ $$ LANGUAGE plpgsql;
 -- NOTE: used your own path to sql files
 -- Data is mocked from 2020-01-01 to 2024-12-18 (for request_date in requests table)
 -- \i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/tenants/tenants.sql
-  
+
 -- \i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/landlords/landlords.sql
 
 -- \i /Users/hieuhoang/Desktop/Projects/apartments_management_system/data/apartments/apartments.sql
