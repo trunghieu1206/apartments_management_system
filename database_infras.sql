@@ -122,7 +122,7 @@ CHECK (duration >= 3);
 
 -- start_month has to be after request_date
 ALTER TABLE requests 
-ADD CONSTRAINT requests_check_start_month_after_request_date 
+ADD CONSTRAINT requests_check_start_month_after_request_date \i 'D:\\Documents\\HUST\\Database Lab\\Project\\apartments_management_system\\data\\requests\\requests.sql'
 CHECK (TO_DATE(start_month || '-01', 'YYYY-MM-DD') > request_date);
 
 -- start_month must be within 1 year of request_date
