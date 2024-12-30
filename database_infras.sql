@@ -197,8 +197,8 @@ ADD CONSTRAINT rating_unique_tenant_id_apartment_id UNIQUE (tenant_id, apartment
 CREATE OR REPLACE FUNCTION tf_bf_insert_on_requests()
 RETURNS TRIGGER AS $$
 DECLARE
-    v_duration INT;
-    v_start_month CHAR(7);
+    v_request_start_date DATE;
+    v_request_end_date DATE;
 BEGIN
 
     -- check if tenant has already requested for this apartment in that month
@@ -212,19 +212,20 @@ BEGIN
         RAISE EXCEPTION 'Request already made for this apartment in the specified month';
     END IF;
 
-    -- check if the apartment has already been under a contract at the first day of start_month
+    -- check if there is a contract on the requested apartment where it overlaps with [start_month:(start_month + duration)]
+    v_request_start_date := TO_DATE(NEW.start_month || '-01', 'YYYY-MM-DD');
+    v_request_end_date := v_request_start_date + (NEW.duration || ' months')::INTERVAL - INTERVAL '1 day';
+
     IF EXISTS (
-        SELECT 1 
+        SELECT 1
         FROM contracts C
         JOIN requests R ON R.request_id = C.request_id
         WHERE R.apartment_id = NEW.apartment_id
-            AND C.end_date >= TO_DATE(NEW.start_month || '-01', 'YYYY-MM-DD')
-    ) THEN 
-        RAISE EXCEPTION 'Cannot request for apartment from start_month = %, it is being rented', NEW.start_month;
+          AND C.start_date <= v_request_end_date
+          AND C.end_date >= v_request_start_date
+    ) THEN
+        RAISE EXCEPTION 'Cannot accept request %, apartment is being rented between the specified period. Tenant ID: %, Apartment ID: %', NEW.request_id, NEW.tenant_id, NEW.apartment_id;
     END IF;
-
-    -- check if there is a contract on the requested apartment where it overlaps with [start_month:(start_month + duration)]
-
 
     -- if every conditions are satisfied then proceed inserting
     RETURN NEW;
