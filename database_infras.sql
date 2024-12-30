@@ -223,7 +223,7 @@ BEGIN
         RAISE EXCEPTION 'Cannot request for apartment from start_month = %, it is being rented', NEW.start_month;
     END IF;
 
-    -- check if there is a contract on the requested apartment where it overlaps with [start_month:(start_month + duratin)]
+    -- check if there is a contract on the requested apartment where it overlaps with [start_month:(start_month + duration)]
 
 
     -- if every conditions are satisfied then proceed inserting
@@ -269,48 +269,37 @@ EXECUTE PROCEDURE tf_bf_delete_on_requests();
 -- note: insert query will insert 3 fields (contract_id, rent_amount, request_id)
 -- the other 2 columns: start_date and end_date will be auto calculated
 --
-CREATE OR REPLACE FUNCTION tf_bf_insert_on_contracts() 
+CREATE OR REPLACE FUNCTION tf_bf_insert_on_requests()
 RETURNS TRIGGER AS $$
-DECLARE 
-    v_start_date DATE;
-    v_end_date DATE;
-    v_apartment_id INT;
-    v_loop RECORD; -- RECORD type holds the results of a query
+DECLARE
+    v_request_start_date DATE;
+    v_request_end_date DATE;
 BEGIN
-
-    -- calculate start_date and end_date of this contract
-    SELECT 
-        TO_DATE(start_month || '-01', 'YYYY-MM-DD'), 
-        ((TO_DATE(start_month || '-01', 'YYYY-MM-DD') +  (duration || ' months')::INTERVAL) - INTERVAL '1 day')::DATE,
-        apartment_id
-    INTO v_start_date, v_end_date, v_apartment_id
-    FROM requests
-    WHERE request_id = NEW.request_id;
-
-    -- set start_date and end_date column in the insert query 
-    NEW.start_date = v_start_date;
-    NEW.end_date = v_end_date;
-    -- note that this will set the value of start_date and end_date
-    -- in the insert query correspondingly whether or not we specify
-    -- these 2 columns in the INSERT query
-
-    -- loop through existing contracts to check if there is any overlap between
-    -- [start_date:end_date] of any contract and [start_date:end_date]
-    -- of to-be-created contract (to-be-accepted request)
-    FOR v_loop IN (
-        SELECT start_date, end_date 
-        FROM contracts C 
+    -- check if tenant has already requested for this apartment in that month
+    IF EXISTS (
+        SELECT 1 
+        FROM requests 
+        WHERE tenant_id = NEW.tenant_id
+            AND apartment_id = NEW.apartment_id
+            AND TO_CHAR(request_date, 'YYYY-MM') = TO_CHAR(NEW.request_date, 'YYYY-MM')
+    ) THEN 
+        RAISE EXCEPTION 'Request already made for this apartment in the specified month';
+    END IF;
+    -- check if there is a contract on the requested apartment where it overlaps with [start_month:(start_month + duration)]
+    v_request_start_date := TO_DATE(NEW.start_month || '-01', 'YYYY-MM-DD');
+    v_request_end_date := v_request_start_date + (NEW.duration || ' months')::INTERVAL - INTERVAL '1 day';
+    IF EXISTS (
+        SELECT 1
+        FROM contracts C
         JOIN requests R ON R.request_id = C.request_id
-        WHERE R.apartment_id = v_apartment_id
-    ) LOOP 
-        IF (v_loop.start_date <= NEW.end_date AND v_loop.end_date >= NEW.start_date) THEN 
-            RAISE EXCEPTION 'cannot accept request %, apartment is being rented between % and %', NEW.request_id, v_loop.start_date, v_loop.end_date;
-        END IF;
-    END LOOP;
-
-    -- if all conditions satisfy then insert this new record into contracts
+        WHERE R.apartment_id = NEW.apartment_id
+          AND C.start_date <= v_request_end_date
+          AND C.end_date >= v_request_start_date
+    ) THEN
+        RAISE EXCEPTION 'Cannot accept request %, apartment is being rented between the specified period. Tenant ID: %, Apartment ID: %', NEW.request_id, NEW.tenant_id, NEW.apartment_id;
+    END IF;
+    -- if every conditions are satisfied then proceed inserting
     RETURN NEW;
-
 END;
 $$ LANGUAGE plpgsql;
 
@@ -862,7 +851,7 @@ WHERE A.landlord_id = 773
     AND B.month = '2024-12'
     AND PD.bill_id IS NULL;
 -- cost: 355.98
--- (already with composite B-tree index on (bill_id, month) of bills table)
+-- (already with composite B-tree index on (contract_id, month) of bills table)
 -- (already composite B-tree index on (tenant_id, bill_id) of payment_details table)
 
 -- with index on apartments.landlord_id

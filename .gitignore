@@ -3,3 +3,5 @@
 .DS_Store
 
 *test
+
+only_database_infras.sql
