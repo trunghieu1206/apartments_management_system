@@ -1,13 +1,12 @@
 -- pg_restore -U postgres -d apartments_project 'D:\Database Lab\apartments_management_system\database_backup'
 -------------------------------------------------------------------1
 -- OK
-create or replace function request_to_rent_apartment (IN tenantID integer, apartmentID integer, startMonth char(7), rentDuration integer) returns void
+create or replace function request_to_rent_apartment (IN tenantID integer, apartmentID integer, startMonth char(7), 
+rentDuration integer) returns void
 as
 $$
 declare
     newID integer;
-    rentEndDate date;
-    rentDate date;
 begin
     select max(request_id) + 1 into newID from requests;
     insert into requests (request_id, tenant_id, apartment_id, request_date, start_month, duration)
@@ -20,42 +19,44 @@ $$
 language plpgsql
 volatile;
 
-
-select apartment_id, start_date, end_date, contract_id
-from contracts c
-join requests r on c.request_id = r.request_id
-where apartment_id = 600;
-
+-- see if tenant 500 has rent apartment 600 or not
 select apartment_id, start_date, end_date, contract_id
 from contracts c
 join requests r on c.request_id = r.request_id
 where tenant_id = 500;
 
-select tenant_id, apartment_id, start_date, end_date
-from contracts c
-join requests r on c.request_id = r.request_id
-where tenant_id = 580;
+-- inner query analysis
+explain analyze
+    insert into requests (request_id, tenant_id, apartment_id, request_date, start_month, duration)
+    values (49995, 500, 600, current_date, '2025-09', 8);
 
-select request_to_rent_apartment(580, 600, '2025-06', 3);
-select request_to_rent_apartment(500, 600, '2025-01', 8);
+-- delete the test request
+delete from requests where request_id = 49995;
 
 
 -- OK
 -------------------------------3
--- view unpaid bill - 13
 create or replace function pay_monthly_bills (IN billID integer, IN tenantID integer) returns void
 as
 $$
+declare
+    billMonth char(7);
 begin
-    if (extract(day from current_date) < 5) then
-        return;
-    end if;
-
     if (exists (
         select 1
         from payment_details
         where bill_id = billID
     )) then
+        raise notice 'Bill % has been paid.', billID;
+        return;
+    end if;
+
+    if (not exists (
+        select 1
+        from bills
+        where bill_id = billID
+    )) then
+        raise notice 'Bill % is not created yet.', billID;
         return;
     end if;
 
@@ -68,7 +69,7 @@ $$
 language plpgsql
 volatile;
 
-
+-- view unpaid bill
 select bill_id, tenant_id, c.contract_id, start_date, end_date
 from bills b left join contracts c on b.contract_id = c.contract_id
 left join requests r on c.request_id = r.request_id
@@ -76,12 +77,25 @@ where bill_id not in (
     select bill_id from payment_details
 );
 
-select pay_monthly_bills(18, 203);
+-- delete test payment
+delete from payment_details where bill_id = 28;
+
+
+explain analyze
+select 1
+from payment_details
+where bill_id = 28;
+explain analyze
+select 1 from bills
+where bill_id = 28;
+explain analyze
+insert into payment_details (bill_id, tenant_id, payment_date)
+values (28, 705, current_date);
+
+
 
 -- CANOOT TEST
 -------------------------------4
--- view rental history - 10 (Hao)
-
 create or replace function cancel_contract (IN tenantID integer, IN contractID integer) returns void
 as
 $$
@@ -94,10 +108,12 @@ begin
 
     if ((extract(year from current_date) - extract(year from startDate)) * 12
         + extract(month from current_date) - extract(month from startDate) < 3) then
+        raise notice 'Cannot cancel contract under 3 months from start date.';
         return;
     end if;
 
     if (extract(day from current_date) < 5) then
+        raise notice 'Cnnot cancel contract sooner than 5th day of the month.';
         return;
     end if;
 
@@ -130,7 +146,7 @@ where bill_id not in (
 
 select pay_monthly_bills(705, 28);
 
-select cancel_contract(705,4);
+select cancel_contract(705,28);
 
 -- OK
 -------------------------------5
@@ -144,8 +160,8 @@ begin
     return query
     select apartment_id, address, size, bedrooms, bathrooms, kitchen, air_conditioner, tv, landlord_id
     from apartments
-    where size >= coalesce(startSize,0)
-      and size <= coalesce(endSize,0)
+    where (startSize is null or size >= startSize)
+      and (endSize is null or size <= endSize)
       and bedrooms = coalesce(numBedrooms, bedrooms)
       and bathrooms = coalesce(numBathrooms, bathrooms)
       and kitchen = coalesce(yn_Kitchen, kitchen)
@@ -169,8 +185,8 @@ select * from filter_apartment(100,120,null,null,'YES','YES','YES');
 EXPLAIN ANALYZE
 SELECT apartment_id, address, size, bedrooms, bathrooms, kitchen, air_conditioner, tv, landlord_id
 FROM apartments
-WHERE size >= COALESCE(100, 0)
-  AND size <= COALESCE(120, 0)
+WHERE size >= 100
+  AND size <= 120
   AND bedrooms = COALESCE(NULL, bedrooms)
   AND bathrooms = COALESCE(NULL, bathrooms)
   AND kitchen = COALESCE('YES', kitchen)
@@ -192,6 +208,17 @@ $$
 language plpgsql
 volatile;
 
+-- see requests that have not been accepted
+select *
+from requests
+where request_id not in (
+    select request_id from contracts
+);
+
+-- analysis
+explain analyze
+    delete from requests
+    where request_id = 31;
 
 -- OK
 -------------------------------9
@@ -208,23 +235,18 @@ language plpgsql
 volatile;
 
 
-select * from rating;
+-- see ratings of tenant 477
+select * from rating where tenant_id = 477;
+-- delete rating of tenant 477 to apartment 548
+delete from rating where tenant_id = 477 and apartment_id = 548;
 
-select tenant_id, apartment_id
-from requests r left join contracts c using (request_id)
-where end_date < current_date
-    and not exists (
-        select 1
-        from rating where tenant_id = r.tenant_id and apartment_id = r.apartment_id
-    );
+-- analysis
+explain analyze
+    insert into requests (request_id, tenant_id, apartment_id, request_date, start_month, duration)
+    values (49996,200,300,'2025-01-01','2025-02',4);
 
-insert into requests (request_id, tenant_id, apartment_id, request_date, start_month, duration)
-values (49994,200,300,'2025-01-01','2025-02',4);
-insert into contracts (contract_id, start_date, end_date, rent_amount, request_id)
-values (4406,'2025-02-01', '2025-05-31',1000,49994);
-
-select rate_apartment(200,300,10);
-
+-- delete test rating
+delete from requests where request_id = 49996;
 
 
 -- OK
@@ -236,16 +258,16 @@ declare
     totalMoney integer;
 begin
     with tmp as (
-        select bill_id, price
-        from requests r
-        left join contracts c on r.request_id = c.request_id
+        select b.bill_id, price
+        from contracts c
+        left join requests r on c.request_id = r.request_id
         left join bills b on c.contract_id = b.contract_id
         where r.tenant_id = tenantID and r.apartment_id = apartmentID
     )
     select coalesce(sum(price),0) into totalMoney
     from tmp
     where bill_id in (
-        select bill_id from payment_details where tenant_id = tenantID
+        select bill_id from payment_details
     );
 
     raise notice 'Total money you paid for apartment %d is: %d', apartmentID, totalMoney;
@@ -264,8 +286,20 @@ select * from requests where request_id = 42490;
 
 select view_total_money_on_apartment(600,516);
 
-explain analyze 
-select * from view_total_money_on_apartment(600,516);
+-- analysis
+explain analyze
+    with tmp as (
+        select b.bill_id, price
+        from contracts c
+        left join requests r on c.request_id = r.request_id
+        left join bills b on c.contract_id = b.contract_id
+        where r.tenant_id = 600 and r.apartment_id = 516
+    )
+    select coalesce(sum(price),0)
+    from tmp
+    where bill_id in (
+        select bill_id from payment_details
+    );
 
 
 -- OK
@@ -294,15 +328,23 @@ $$
 language plpgsql
 stable;
 
-select contract_id, request_id, apartment_id, landlord_id, rent_amount, start_date, end_date
-from contracts
-join requests using (request_id) 
-join apartments using (apartment_id)
-where landlord_id = 600;
+-- execute function
+select * from view_monthly_expected_earning(600, '2022-10');
 
-select view_monthly_expected_earning(600,'2022-10');
+-- analysis
+explain analyze
+with tmp as (
+        select contract_id
+        from contracts c
+        join requests r on c.request_id = r.request_id
+        join apartments a on r.apartment_id = a.apartment_id
+        where a.landlord_id = 600
+    )
+    select coalesce(sum(price),0)
+    from tmp t join bills b on t.contract_id = b.contract_id
+    where b.month = '2022-10';
 
-explain analyze select * from view_monthly_expected_earning(600,'2022-10');
+
 
 -- OK
 -------------------------------24
@@ -336,31 +378,26 @@ language plpgsql
 stable;
 
 
-select contract_id, request_id, apartment_id, landlord_id, rent_amount, start_date, end_date
-from contracts
-join requests using (request_id) 
-join apartments using (apartment_id)
-where landlord_id = 500;
-
-    with tmp as (
-            select contract_id
-            from contracts c
-            join requests r on c.request_id = r.request_id
-            join apartments a on r.apartment_id = a.apartment_id
-            where a.landlord_id = 500
-        )
-        select t.contract_id, bill_id
-        from tmp t join bills b on t.contract_id = b.contract_id
-        where b.month = '2022-11'
-        and exists (
-            select 1
-            from payment_details p
-            where b.bill_id = p.bill_id
-        );
-
+-- execute function
 select view_monthly_received_earning(500,'2022-11');
 
-explain analyze select * from view_monthly_received_earning(500,'2022-11');
+-- analysis
+explain analyze 
+with tmp as (
+        select contract_id
+        from contracts c
+        join requests r on c.request_id = r.request_id
+        join apartments a on r.apartment_id = a.apartment_id
+        where a.landlord_id = 500
+    )
+    select coalesce(sum(price),0)
+    from tmp t join bills b on t.contract_id = b.contract_id
+    where b.month = '2022-11'
+    and exists (
+        select 1
+        from payment_details p
+        where b.bill_id = p.bill_id
+    );
 
 -- OK
 -------------------------------27
@@ -394,7 +431,7 @@ begin
                     + (extract(month from v_loop2.payment_date) - extract(month from billDate)) * 30
                     + (extract(day from v_loop2.payment_date) - extract(day from billDate));
 
-            if (v_loop2.payment_date is null) then
+            if (v_loop2.payment_date is null and extract(day from current_date) > 10) then
                 lateTime := lateTime + 1;
             end if;
 
@@ -435,6 +472,14 @@ select view_blacklist_tenants(1000);
 explain analyze 
 select * from view_blacklist_tenants(1000);
 
+EXPLAIN ANALYZE
+DO $$
+BEGIN
+    PERFORM view_blacklist_tenants(1000);
+END;
+$$;
+
+
 landlord: 1000
 tenant 992: 16 times
 tenant 958: 16 times
@@ -473,8 +518,8 @@ $$
 language plpgsql
 stable;
 
-select * from view_unaccepted_request(500);
 
+-- analysis
 EXPLAIN ANALYZE
 SELECT *
 FROM requests
@@ -513,11 +558,19 @@ $$
 language plpgsql
 volatile;
 
-select * from view_unaccepted_request(500);
 
-select * from accept_request(631,1000);
+-- see request 631
+select * from requests where request_id = 631;
 
-explain analyze select * from accept_request(631,1000);
+-- analysis
+explain analyze
+select start_month from requests where request_id = 631;
+explain analyze
+select max(contract_id) + 1
+from contracts;
+explain analyze
+insert into contracts (contract_id, rent_amount, request_id)
+values (10001, 1000, 631);
 
 
 -- OK
@@ -569,7 +622,15 @@ from contracts c left join bills b on c.contract_id = b.contract_id
 left join payment_details p on b.bill_id = p.bill_id
 where c.contract_id = 400;
 
+-- execute function
 select * from terminate_contract(400);
+
+-- analysis
+explain analyze
+select b.bill_id, b.month, p.payment_date 
+        from contracts c left join bills b on c.contract_id = b.contract_id
+        left join payment_details p on b.bill_id = p.bill_id
+        where c.contract_id = 400;
 
 
 -- OK
@@ -595,8 +656,10 @@ select c.contract_id, b.bill_id, b.month, p.payment_date
     left join payment_details p on b.bill_id = p.bill_id
     where p.bill_id is null;
 
+-- execute function
 select * from view_payment_status(4);
 
+-- analysis
 explain analyze
 select c.contract_id, b.bill_id, b.month, p.payment_date
     from contracts c join bills b on c.contract_id = b.contract_id
@@ -606,7 +669,8 @@ select c.contract_id, b.bill_id, b.month, p.payment_date
 
 -- 
 ---------------------------------35
-create or replace function add_apartment(IN aress varchar, IN sze integer, IN berooms integer, IN barooms integer, IN kchen varchar, IN aconditioner varchar, IN t_v varchar, IN landlordID integer)
+create or replace function add_apartment(IN aress varchar, IN sze integer, IN berooms integer, IN barooms integer, 
+IN kchen varchar, IN aconditioner varchar, IN t_v varchar, IN landlordID integer)
 returns void
 as
 $$  
@@ -633,7 +697,11 @@ $$
 language plpgsql
 volatile;
 
-select * from add_apartment('Hanoi001', 100, 2, 2, 'YES', 'YES', 'YES', 'YES', 100);
+select * from add_apartment('Hanoi002', 100, 2, 2, 'YES', 'YES', 'YES', 'YES', 100);
+
+-- analysis
+explain analyze 
+select * from apartments where address = 'Hanoi002';
 
 
 
