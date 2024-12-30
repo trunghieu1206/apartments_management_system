@@ -634,20 +634,3 @@ language plpgsql
 volatile;
 
 select * from add_apartment('Hanoi001', 100, 2, 2, 'YES', 'YES', 'YES', 'YES', 100);
-
-
-
-
-
-      
-
-
-
-
-
-
-
-
-
-
-    
