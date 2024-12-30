@@ -697,25 +697,9 @@ $$
 language plpgsql
 volatile;
 
+
 select * from add_apartment('Hanoi002', 100, 2, 2, 'YES', 'YES', 'YES', 'YES', 100);
 
 -- analysis
 explain analyze 
 select * from apartments where address = 'Hanoi002';
-
-
-
-
-
-      
-
-
-
-
-
-
-
-
-
-
-    
