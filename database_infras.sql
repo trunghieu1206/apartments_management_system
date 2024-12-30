@@ -223,6 +223,9 @@ BEGIN
         RAISE EXCEPTION 'Cannot request for apartment from start_month = %, it is being rented', NEW.start_month;
     END IF;
 
+    -- check if there is a contract on the requested apartment where it overlaps with [start_month:(start_month + duratin)]
+
+
     -- if every conditions are satisfied then proceed inserting
     RETURN NEW;
 END;

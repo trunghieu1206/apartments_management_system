@@ -106,7 +106,6 @@ WHERE tenant_id = 1;
 CREATE INDEX idx_payment_details_tenant_id ON payment_details(tenant_id);
 -- cost with index: 112.94 
 
-DROP INDEX idx_payment_details_tenant_id;
 
 ---------------------------------------------------------------------
 -- 8: view current active contract of a tenant
@@ -155,19 +154,6 @@ CREATE INDEX idx_requests_tenant_id ON requests (tenant_id);
 DROP INDEX idx_contracts_request_id;
 DROP INDEX idx_requests_tenant_id;
 DROP INDEX idx_contracts_end_date;
-
--- 2nd method:
-EXPLAIN ANALYZE SELECT contract_id
-FROM (
-    SELECT contract_id, request_id 
-    FROM contracts
-    WHERE start_date <= CURRENT_DATE
-        AND end_date >= CURRENT_DATE
-) C
-JOIN requests ON C.
-WHERE tenant_id = 2
-    AND start_date <= CURRENT_DATE
-    AND end_date >= CURRENT_DATE;
 
 ---------------------------------------------------------------------
 -- 16: view request history
