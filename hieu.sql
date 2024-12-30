@@ -4,7 +4,7 @@
 EXPLAIN ANALYZE SELECT apartment_id
 FROM apartments A
 EXCEPT 
-SELECT apartment_id 
+SELECT apartment_id
 FROM requests R 
 JOIN contracts C ON C.request_id = R.request_id
 WHERE C.start_date <= CURRENT_DATE
