@@ -421,17 +421,17 @@ begin
         lateTime := 0;
 
         for v_loop2 in (
-            select p.bill_id, payment_date, month
+            select b.bill_id, payment_date, month
             from bills b left join payment_details p on b.bill_id = p.bill_id
             where b.contract_id = v_loop1.contract_id and p.tenant_id = v_loop1.tenant_id
         ) loop 
             payDay := 0;
             billDate := to_date(v_loop2.month || '-05', 'YYYY-MM-DD');
-            payDay := (extract(year from v_loop2.payment_date) - extract(year from billDate)) * 365
+            payDay := coalesce((extract(year from v_loop2.payment_date) - extract(year from billDate)) * 365
                     + (extract(month from v_loop2.payment_date) - extract(month from billDate)) * 30
-                    + (extract(day from v_loop2.payment_date) - extract(day from billDate));
+                    + (extract(day from v_loop2.payment_date) - extract(day from billDate)), 0);
 
-            if (v_loop2.payment_date is null and extract(day from current_date) > 10) then
+            if (v_loop2.payment_date is null and v_loop2.bill_id is not null and (extract(day from current_date) > 10) or extract(day from current_date) < 5) then
                 lateTime := lateTime + 1;
             end if;
 
