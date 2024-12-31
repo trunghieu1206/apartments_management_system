@@ -313,15 +313,15 @@ EXECUTE PROCEDURE tf_bf_insert_on_contracts();
 -- update constraint
 -- (when tenant wants to end contract sooner, or when landlord needs to terminate contract)
 -- 
-CREATE OR REPLACE FUNCTION tf_bf_update_on_contracts()
-RETURNS TRIGGER AS $$
-BEGIN
+-- CREATE OR REPLACE FUNCTION tf_bf_update_on_contracts()
+-- RETURNS TRIGGER AS $$
+-- BEGIN
 
-    -- not yet implement
+--     -- not yet implement
 
 
-END;
-$$ LANGUAGE plpgsql;
+-- END;
+-- $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER bf_update_on_contracts
 BEFORE UPDATE ON contracts

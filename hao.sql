@@ -7,11 +7,11 @@
 DROP FUNCTION IF EXISTS view_pending_requests, view_apartment_info, view_landlord_info, view_recived_requests,view_request_statistics, view_tenant_accept_rate;
 DROP MATERIALIZED VIEW IF EXISTS apartment_avg_rating;
 
-CREATE INDEX idx_apartments_apartment_id ON apartments(apartment_id);
-CREATE INDEX idx_requests_apartment_id ON requests(apartment_id);
-CREATE INDEX idx_requests_tenant_id ON requests(tenant_id);
-CREATE INDEX idx_requests_request_id ON requests(request_id);
-CREATE INDEX idx_bills_bill_id ON bills(bill_id);
+--CREATE INDEX idx_apartments_apartment_id ON apartments(apartment_id);
+--CREATE INDEX idx_requests_apartment_id ON requests(apartment_id);
+--CREATE INDEX idx_requests_tenant_id ON requests(tenant_id);
+--CREATE INDEX idx_requests_request_id ON requests(request_id);
+--CREATE INDEX idx_bills_bill_id ON bills(bill_id);
 
 CREATE OR REPLACE FUNCTION view_rental_history(p_tenant_id INT)
 RETURNS TABLE (apartment_id INT, contract_id INT, start_date DATE, end_date DATE)
