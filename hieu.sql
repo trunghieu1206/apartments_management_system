@@ -256,14 +256,14 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-SELECT * FROM view_active_tenants(1);
+SELECT * FROM view_active_tenants(2);
 
 -- inner query analysis
-EXPLAIN SELECT tenant_id 
+EXPLAIN ANALYZE SELECT tenant_id 
 FROM requests R
 JOIN contracts C ON C.request_id = R.request_id
 JOIN apartments A ON R.apartment_id = A.apartment_id
-WHERE A.landlord_id = 5
+WHERE A.landlord_id = 1
     AND C.start_date <= CURRENT_DATE
     AND C.end_date >= CURRENT_DATE;
 --> total cost: 376.03
