@@ -5,23 +5,33 @@
 
 --Query 10--
 DROP FUNCTION IF EXISTS view_pending_requests, view_apartment_info, view_landlord_info, view_recived_requests,view_request_statistics, view_tenant_accept_rate;
+DROP MATERIALIZED VIEW IF EXISTS apartment_avg_rating;
 
 CREATE INDEX idx_apartments_apartment_id ON apartments(apartment_id);
 CREATE INDEX idx_requests_apartment_id ON requests(apartment_id);
+CREATE INDEX idx_requests_tenant_id ON requests(tenant_id);
 CREATE INDEX idx_requests_request_id ON requests(request_id);
+CREATE INDEX idx_bills_bill_id ON bills(bill_id);
+CREATE INDEX idx_tenants_tenant_id ON tenants(tenant_id);
+CREATE INDEX idx_contracts_request_id ON contracts(request_id);
+CREATE INDEX idx_landlords_landlord_id ON landlords(landlord_id);
+CREATE INDEX idx_apartmets_landlord_id ON apartments(landlord_id);
+
+DROP INDEX IF EXISTS idx_requests_tenant_id, idx_contracts_request_id;
 
 CREATE OR REPLACE FUNCTION view_rental_history(p_tenant_id INT)
 RETURNS TABLE (apartment_id INT, contract_id INT, start_date DATE, end_date DATE)
 AS $$
-BEGIN 
+BEGIN
     RETURN QUERY 
         SELECT a.apartment_id, c.contract_id, c.start_date, c.end_date
-        FROM contracts c 
-        JOIN requests r ON c.request_id = r.request_id
-        JOIN apartments a ON r.apartment_id = a.apartment_id
+        FROM contracts c
+        INNER JOIN requests r ON c.request_id = r.request_id
+        INNER JOIN apartments a ON r.apartment_id = a.apartment_id
         WHERE r.tenant_id = p_tenant_id;
 END;
 $$ LANGUAGE plpgsql;
+-- select * from view_rental_history(666);
 
 --Query 11: view all requests of tenant that have not been accepted--
 CREATE OR REPLACE FUNCTION view_pending_requests(p_tenant_id INT)
@@ -60,17 +70,28 @@ END;
 $$ LANGUAGE plpgsql;
 
 --Query 14: show landlord info and avg rating--
----Query 36: view apt rating---
+---create materialized view since this rating can be call multiple time
+CREATE MATERIALIZED VIEW apartment_avg_rating AS
+    SELECT apartment_id, AVG(score)
+    FROM rating
+    GROUP BY apartment_id;
+
+---create index for faster query
+CREATE INDEX idx_mview_apartmentavgrating_apartment_id ON apartment_avg_rating(apartment_id);
+
+---Query 37: view apt rating---
 CREATE OR REPLACE FUNCTION view_apartment_rating(p_apt_id INT)
 RETURNS DECIMAL(2,1)
 AS $$
 DECLARE
     v_avg_score DECIMAL(2,1);
 BEGIN 
-    --calculate avg into para
-    SELECT AVG(score)
+    --update the view each time you call the function
+    REFRESH MATERIALIZED VIEW apartment_avg_rating;
+    --retrieve the data in the cache
+    SELECT avg
     INTO v_avg_score
-    FROM rating
+    FROM apartment_avg_rating
     WHERE apartment_id = p_apt_id;
     --return the score
     RETURN v_avg_score;
@@ -87,10 +108,10 @@ BEGIN
     SELECT AVG(apt_avg.apt_rating)
     INTO v_avg_score
     FROM (
-        --call the function to calculate each apt rating1111111
+        --call the function to calculate each apt rating
         SELECT view_apartment_rating(a.apartment_id) AS apt_rating
         FROM apartments a
-        WHERE a.landlord_id = p_landlord_id
+        WHERE a.landlord_id = p_landlord_id --p_landlord_id
     ) apt_avg;
 
     RETURN v_avg_score;
@@ -192,6 +213,32 @@ SELECT
 END;
 $$ LANGUAGE plpgsql;
 
+--Query 22: view idle apartment in the next *input* month
+CREATE OR REPLACE FUNCTION view_idle_apartment_future(p_landlord_id INT, p_month INT)
+RETURNS TABLE (apartment_id INT)
+AS $$
+BEGIN 
+    RETURN QUERY
+        SELECT a.apartment_id
+        FROM apartments a
+        LEFT JOIN (
+            SELECT 
+                r.apartment_id,
+                MIN(c.start_date) AS next_contract_start, --nearest contract start date
+                MAX(c.end_date) AS last_contract_end -- last contract end date
+            FROM requests r
+            LEFT JOIN contracts c ON r.request_id = c.request_id
+            GROUP BY r.apartment_id
+        ) contract_summary ON a.apartment_id = contract_summary.apartment_id
+        WHERE a.landlord_id = p_landlord_id AND (
+            contract_summary.apartment_id IS NULL -- No contracts exist for this apartment
+            OR contract_summary.last_contract_end < DATE_TRUNC('month', CURRENT_DATE) -- Last contract ends before this month
+            OR contract_summary.next_contract_start > DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' * (p_month + 1) -- Next contract starts after the specified period
+        );
+END;
+$$ LANGUAGE plpgsql;
+--select view_idle_apartment_future(409,2);
+
 --Query 28: fine tenants 20% for late bill payment--
 CREATE OR REPLACE FUNCTION fine_late_payment(p_bill_id INT)
 RETURNS VOID
@@ -199,7 +246,7 @@ AS $$
 DECLARE
     v_bill_date DATE;
     v_bill_price INT;
-    v_temp INT;
+    --v_temp INT;
 BEGIN 
     --Pass value to param
     SELECT TO_DATE(b.month || '-01', 'YYYY-MM-DD'), b.price
@@ -220,7 +267,7 @@ BEGIN
             RAISE EXCEPTION 'The payment is not overdue!';
         ELSE 
             --process to fine the tenant by 20%
-            v_temp := v_bill_price;
+            --v_temp := v_bill_price;
             v_bill_price := v_bill_price * 120 / 100;
             UPDATE bills
             SET price = v_bill_price
@@ -228,9 +275,9 @@ BEGIN
             
             RAISE NOTICE 'Tenant has been fined 20%% of the bill (%)', v_bill_price;
             --return the old value to continue query (delete this and the temp param later)
-            UPDATE bills
-            SET price = v_temp
-            WHERE bill_id = p_bill_id;
+            --UPDATE bills
+            --SET price = v_temp
+            --WHERE bill_id = p_bill_id;
         END IF;
     END IF;
 END;
@@ -303,16 +350,10 @@ BEGIN
         FROM requests r
         JOIN apartments a ON r.apartment_id = a.apartment_id
         WHERE a.landlord_id = p_landlord_id
-        --WHERE EXISTS (
-            --SELECT 1 
-            --FROM apartments a
-            --WHERE a.apartment_id = r.apartment_id AND a.landlord_id = p_landlord_id
-        --)
-        
         GROUP BY r.apartment_id;
 END;
 $$ LANGUAGE plpgsql;
---select * from view_request_statistics(409);
+select * from view_request_statistics(409);
 
 --Query 33: view return rate of an apartment--
 ---OPTIMIZED---
@@ -343,7 +384,8 @@ BEGIN
     RETURN v_return_rate;
 END;
 $$ LANGUAGE plpgsql;
---select view_apartment_return_rate(1477);
+
+select view_apartment_return_rate(1477);
 --SELECT r.apartment_id, COUNT(c.contract_id) AS rental_count
 --FROM contracts c
 --JOIN requests r ON c.request_id = r.request_id
@@ -400,7 +442,7 @@ END;
 $$ LANGUAGE plpgsql;
 --SELECT view_landlord_return_rate(409);
 
---Query 35: view request accept rate--
+--Query 36: view request accept rate--
 ---OPTIMIZED---
 CREATE OR REPLACE FUNCTION view_tenant_accept_rate(p_tenant_id INT)
 RETURNS NUMERIC
@@ -421,5 +463,5 @@ BEGIN
     RETURN v_accept_rate;
 END;
 $$ LANGUAGE plpgsql;
+select view_tenant_accept_rate(666);
 
---select view_tenant_accept_rate(666);
