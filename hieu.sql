@@ -4,7 +4,7 @@
 EXPLAIN ANALYZE SELECT apartment_id
 FROM apartments A
 EXCEPT 
-SELECT apartment_id 
+SELECT apartment_id
 FROM requests R 
 JOIN contracts C ON C.request_id = R.request_id
 WHERE C.start_date <= CURRENT_DATE
@@ -106,7 +106,6 @@ WHERE tenant_id = 1;
 CREATE INDEX idx_payment_details_tenant_id ON payment_details(tenant_id);
 -- cost with index: 112.94 
 
-DROP INDEX idx_payment_details_tenant_id;
 
 ---------------------------------------------------------------------
 -- 8: view current active contract of a tenant
@@ -155,19 +154,6 @@ CREATE INDEX idx_requests_tenant_id ON requests (tenant_id);
 DROP INDEX idx_contracts_request_id;
 DROP INDEX idx_requests_tenant_id;
 DROP INDEX idx_contracts_end_date;
-
--- 2nd method:
-EXPLAIN ANALYZE SELECT contract_id
-FROM (
-    SELECT contract_id, request_id 
-    FROM contracts
-    WHERE start_date <= CURRENT_DATE
-        AND end_date >= CURRENT_DATE
-) C
-JOIN requests ON C.
-WHERE tenant_id = 2
-    AND start_date <= CURRENT_DATE
-    AND end_date >= CURRENT_DATE;
 
 ---------------------------------------------------------------------
 -- 16: view request history
@@ -409,69 +395,3 @@ FROM rating
 GROUP BY apartment_id
 ORDER BY avg_score DESC
 LIMIT 10;
-
----------------------------------------------------------------------
--- *****
--- `requests` table
--- insert constraints: if tenants want to create a new request
---
-CREATE OR REPLACE FUNCTION tf_bf_insert_on_requests()
-RETURNS TRIGGER AS $$
-BEGIN
-    -- check if tenant has already requested for this apartment in that month
-    IF EXISTS (
-        SELECT 1 
-        FROM requests 
-        WHERE tenant_id = NEW.tenant_id
-            AND apartment_id = NEW.apartment_id
-            AND TO_CHAR(request_date, 'YYYY-MM') = TO_CHAR(NEW.request_date, 'YYYY-MM')
-    ) THEN 
-        RAISE EXCEPTION 'Request already made for this apartment in the specified month';
-    END IF;
-    -- check if the apartment has already been under a contract at the first day of start_month
-    IF EXISTS (
-        SELECT 1 
-        FROM contracts C
-        JOIN requests R ON R.request_id = C.request_id
-        WHERE R.apartment_id = NEW.apartment_id
-            AND C.end_date >= TO_DATE(NEW.start_month || '-01', 'YYYY-MM-DD')
-    ) THEN 
-        RAISE EXCEPTION 'Cannot request for apartment from start_month = %, it is being rented', NEW.start_month;
-    END IF;
-    -- if every conditions are satisfied then proceed inserting
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER bf_insert_on_requests
-BEFORE INSERT ON requests
-FOR EACH ROW
-EXECUTE PROCEDURE tf_bf_insert_on_requests();
-
--- auto add bill function, can be called using pg_cron extension to auto check for 5th day
--- 
-CREATE OR REPLACE FUNCTION generate_bills()
-RETURNS VOID AS $$
-DECLARE 
-    v_contract_id INT;
-    v_rent_amount INT;
-BEGIN 
-
-    INSERT INTO bills (contract_id, month, price)
-    SELECT contract_id, EXTRACT(MONTH FROM CURRENT_DATE), rent_amount
-    FROM contracts
-    WHERE end_date > CURRENT_DATE;
-
-END;
-$$ LANGUAGE plpgsql;
-
----------------------------------------------------------------------
--- SOME NOTES:
--- When to use index
-    -- for large table, frequent query to retrieve data
-    -- joining tables to increase performance
-    -- conditions on columns with high-selectivity 
--- When not to use index
-    -- for SMALL TABLES, seq scan (whole scan on table) could be faster than having to maintain index overhead
-    -- for tables with frequent insertions, updates and deletes, we have to consider the tradeoff between these operations and queries (If frequent queries then index is still useful)
-    -- when the filter condition returns a large number of matching rows then index might not prove to be beneficial (low cardinality columns)
